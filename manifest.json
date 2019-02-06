@@ -1,0 +1,14 @@
+{
+  "short_name": "Web Snake",
+  "name": "Web Snake by @deathmist1337",
+  "orientation": "portrait",
+  "background_color": "#101010",
+  "theme_color": "#181818",
+  "icons": [{
+      "src": "/snake/favicon.png",
+      "type": "image/png",
+      "sizes": "235x235"
+    }],
+  "start_url": "/snake/",
+  "display": "fullscreen"
+}

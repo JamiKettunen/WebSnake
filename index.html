@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html class="flex center-y">
+
+  <head>
+    <title>Web Snake</title>
+    <meta name="theme-color" content="#181818">
+    <!--<meta name="viewport" content="initial-scale=1.0, user-scalable=0">-->
+    <link rel="icon" type="image/png" href="/snake/favicon.png" sizes="235x235">
+    <link rel="manifest" href="/snake/manifest.json">
+
+    <style>
+      @import url('https://fonts.googleapis.com/css?family=Abel');
+      
+      /* Remove all margin & padding */
+
+      * {
+        margin: 0;
+        padding: 0;
+      }
+
+      /* Set display of elements with this class as 'flex' */
+
+      .flex {
+        display: flex;
+      }
+
+      /* Hide any element with this class */
+
+      .no-display {
+        display: none;
+      }
+
+      /* Expand width & center on the X-axis */
+
+      .center-x {
+        width: 100%;
+        justify-content: center;
+      }
+
+      /* Expand height & center on the Y-axis */
+
+      .center-y {
+        height: 100%;
+        align-items: center;
+      }
+
+      /* Site foreground & background colors */
+
+      html,
+      body {
+        color: white;
+        background-color: rgb(16, 16, 16);
+      }
+
+      /* DIV that contains game score text, drawing canvas etc. */
+
+      div#container {
+        text-align: center;
+      }
+
+      /* Default class for paragraphs */
+
+      p.default {
+        font-size: 20pt;
+        font-family: 'Abel', sans-serif;
+      }
+
+      /* Game information paragraph, shows eg. score */
+
+      p#info {
+        margin-bottom: 24px;
+      }
+
+      /* Game canvas background color */
+
+      canvas#gc {
+        background-color: black;
+      }
+
+      /* Death screen bg color (same as body, TODO Do in JS) */
+
+      div#deathScreen {
+        background-color: rgb(16, 16, 16);
+      }
+
+      /* Center paragraph vertically (atleast try) */
+
+      p#gameOver {
+        margin-top: 25%;
+      }
+
+      /* Shows game instructions */
+
+      p#help {
+        margin-top: 24px;
+      }
+
+    </style>
+  </head>
+
+  <body class="flex center-x center-y">
+    <div id="container">
+      <!-- Site loading text -->
+      <p class="default" id="loading" style="font-size: 350%;">Loading... Please wait</p>
+
+      <!-- Shows current score -->
+      <p class="default no-display" id="info">Score: 0 / ?</p>
+
+      <!-- Game GFX buffer -->
+      <canvas class="no-display" id="gc"></canvas>
+
+      <!-- Shown when Game Over -->
+      <div class="no-display" id="deathScreen">
+        <p class="default" id="gameOver"></p>
+      </div>
+
+      <!-- Controls info -->
+      <p class="default no-display" id="help"></p>
+    </div>
+
+    <script>
+      const infoText = document.querySelector("#info"); // Score text / other info element
+      const content = document.querySelector("#container"); // Container element for all displayed elements
+      const gc = document.querySelector("#gc"); // Game canvas HTML element
+      const ctrlsHelp = document.querySelector("#help");
+      const deathScreen = document.querySelector("#deathScreen");
+      const gameOverTxt = document.querySelector("#gameOver");
+      const cxt = gc.getContext("2d"); // Canvas gfx buffer
+
+      // Game settings
+      var gameSpeed = 8; // Game updates {gameSpeed}x / second (def. 12) (const)
+      var maxFood = 2; // Maximum amount of food on the screen at once, food on the screen @ game start (const)
+      var gridSize = 24; // How big each tile is (def. 24)
+      var grids = 16; // How many tiles / axis there are (def. 16)
+      var wraps = true; // Snake wraps around borders? (def. true)
+      var dir = 1; // Snake moving direction: 1 = Left, 2 = Up, 3 = Right, 4 = Down
+      var borderStyle = "solid white";
+
+      var updateLoop; // Game loop timer
+      var loadDone = false;
+
+      var snake = [];
+      var snakeBuff = [];
+      var food = [];
+
+      var lastTickDir = 1; // Last direction after update(), used to prevent going in previous direction in the next frame
+
+      function rngInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+
+      function point(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+
+      function pointEqls(p1, p2) {
+        try {
+          return (p1.x === p2.x && p1.y === p2.y);
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function pointInArray(p, arr) {
+        var toReturn = false;
+        try {
+          for (i = 0; i < arr.length; i++) {
+            if (pointEqls(arr[i], p)) {
+              //console.log("true, returning");
+              toReturn = true;
+              break;
+              //console.log("after break???");
+            }
+          }
+        } catch (e) {
+          return toReturn;
+        }
+        //console.log("pointInArray(): returning " + toReturn);
+        return toReturn;
+      }
+
+      function getPointIndex(p, arr) {
+        var idx = -1;
+        for (i = 0; i < arr.length; i++) {
+          if (pointEqls(arr[i], p)) {
+            idx = i;
+            break;
+          }
+        }
+        return idx;
+      }
+
+      function pointToString(p) {
+        return "(" + p.x + "," + p.y + ")";
+      }
+
+      function wrap(p) {
+        if (p.x < 0) p.x = gridSize * (grids - 1);
+        else if (p.x > gridSize * (grids - 1)) p.x = 0;
+
+        if (p.y < 0) p.y = gridSize * (grids - 1);
+        else if (p.y > gridSize * (grids - 1)) p.y = 0;
+      }
+
+      var isMobile = ("ontouchstart" in document.documentElement && (navigator.userAgent.match(/Mobi/) !== null));
+
+      function addTailPart() {
+        if (snake.length > 0) snakeBuff.push(snake[0]); // old=snake.
+      }
+
+      function getScore() {
+        return Math.max((snake.length + snakeBuff.length) - 3, 0);
+      }
+
+      function render(snakeArr) {
+        cxt.clearRect(0, 0, gc.width, gc.height);
+        snake = snakeArr;
+
+        // Render (updated) score
+        var score = getScore();
+        var hiScore = localStorage.getItem("highscore");
+        var newText = ((score <= hiScore) ? "S" : "Highs") + "core: " + score + ((score <= hiScore) ? " / " + hiScore : "");
+        if (infoText.innerHTML !== newText) infoText.innerHTML = newText;
+
+        // Render food
+        //console.log("rendering " + food.length + " food items...");
+        for (i = 0; i < food.length; i++) {
+          var pos = food[i];
+          cxt.fillStyle = "rgb(240,0,0)";
+          //cxt.fillStyle = "rgb(" + rngInt(0, 255) + "," + rngInt(0, 255) + "," + rngInt(0, 255) + ")";
+          cxt.fillRect(pos.x, pos.y, gridSize, gridSize);
+        }
+
+        var greenVal = 240;
+
+        renderedParts = [];
+        var rendered = false;
+
+        // Render snake
+        for (i = 0; i < snake.length; i++) {
+          var pos = snake[i];
+          rendered = renderedParts.includes(pos);
+          if (!rendered) {
+            greenVal = Math.max((240 - ((renderedParts.length - 1) * 6)), 96);
+            cxt.fillStyle = "rgb(0," + greenVal + ",0)";
+            cxt.fillRect(pos.x, pos.y, gridSize, gridSize);
+            renderedParts.push(pos);
+          }
+        }
+      }
+
+      function genFood() {
+        if (food.length < maxFood) {
+          var genSafe = false;
+          var p = undefined;
+          for (i = 0; i < (grids * grids); i++) {
+            p = new point(rngInt(0, (grids - 1)) * gridSize, rngInt(0, (grids - 1)) * gridSize);
+            genSafe = (!pointInArray(p, snake) && !pointInArray(p, snakeBuff) && !pointInArray(p, food))
+            if (genSafe) {
+              food.push(p);
+              break;
+            }
+          }
+        } else console.log("genFood(): Not generating more food because limit is set to " + maxFood);
+      }
+
+      function togglePause(e) {
+        toggleLoop();
+        if (updateLoop === undefined) {
+          infoText.innerHTML = "Paused | Tap " + ((!isMobile) ? "space " : "") + "to unpause...";
+        }
+      }
+
+      function replayOnMobile(e) {
+        setup();
+        infoText.removeEventListener("touchend", replayOnMobile, true); // Replace "replay" functionality
+        infoText.addEventListener("touchend", togglePause, true); // of infoText touch with "pause"
+        e.preventDefault();
+      }
+
+      function gameOver() {
+        if (updateLoop !== undefined) toggleLoop(); // Stop the timer if running
+        var bestScore = localStorage.getItem("highscore"); // Highscore from localStorage, number expected
+        var gotHighScore = false;
+        var score = getScore();
+        if (bestScore < score) {
+          localStorage.setItem("highscore", score);
+          gotHighScore = true;
+        }
+
+        infoText.innerHTML = "Game Over!";
+        deathScreen.style.display = "inherit";
+        gc.style.display = "none";
+        ctrlsHelp.style.display = "none";
+        gameOverTxt.style.marginTop = (isMobile) ? "25%" : "37%";
+        gameOverTxt.innerHTML = /*Game Over!<br>*/ "Your score: " + score + ((gotHighScore) ? " (New Highscore!)" : "<br>Your highscore: " + bestScore) + "<br>" + ((isMobile) ? "Tap 'Game Over!'" : "Press 'R'") + " to replay...";
+
+        infoText.removeEventListener("touchend", togglePause, true); // Replace "pause" functionality
+        infoText.addEventListener("touchend", replayOnMobile, true); // of infoText touch with "replay"
+        //setup();
+      }
+
+      function update() {
+        //cxt.clearRect(0,0,gc.width,gc.height);
+        lastTickDir = dir;
+
+        var newSnake = [];
+        var pos = undefined;
+        var tmpPos = undefined;
+        var collided = false;
+
+        for (i = 0; i < snake.length; i++) {
+          if (collided) break;
+
+          pos = snake[i];
+          tmpPos = new point(pos.x, pos.y);
+
+          if (i === 0) {
+            if (lastTickDir == 1) tmpPos.x -= gridSize; // Move left
+            else if (lastTickDir == 2) tmpPos.y -= gridSize; // Move up
+            else if (lastTickDir == 3) tmpPos.x += gridSize; // Move right
+            else if (lastTickDir == 4) tmpPos.y += gridSize; // Move down
+
+            if (wraps) wrap(tmpPos);
+            else { // Check for collision on wall...
+              if (tmpPos.x > gridSize * (grids - 1)) collided = true;
+              else if (tmpPos.x < 0 && !collided) collided = true;
+
+              if (tmpPos.y > gridSize * (grids - 1) && !collided) collided = true;
+              else if (tmpPos.y < 0 && !collided) collided = true;
+            }
+          } else {
+            tmpPos = snake[i - 1];
+          }
+
+          if (!collided) { // Not collided on wall
+            if (!pointInArray(tmpPos, newSnake)) newSnake.push(tmpPos); // && !pointInArray(tmpPos, food)
+            else collided = pointEqls(newSnake[0], tmpPos);
+            //console.log("update(): while adding snake parts, value already existed!");
+          } else {
+            console.log("Collided on wall!");
+          }
+        }
+
+        if (collided) {
+          gameOver();
+        } // Collided! Game Over!
+        else {
+          // Handle food collision
+          if (pointInArray(newSnake[0], food)) { // Food item eaten
+            var idx = getPointIndex(newSnake[0], food);
+            food.splice(idx, 1); // Remove old food item
+            addTailPart(); // Add a new tail part (also increments score)
+            genFood(); // Generate a new food item
+          }
+
+          // Handle snake buffer
+          var toDelete = [];
+          snakeBuff.forEach(function(pos) {
+            tmpPos = new point(pos.x, pos.y);
+            // Point can be safely drawn from snake buffer
+            if (!pointInArray(tmpPos, newSnake) && !pointInArray(tmpPos, food)) {
+              newSnake.push(tmpPos);
+              toDelete.push(tmpPos);
+            }
+          });
+          // Delete items that can be safely drawn from the snake buffer
+          if (toDelete.length > 0) {
+            toDelete.forEach(function(pos) {
+              var idx = getPointIndex(pos, toDelete);
+              if (idx !== -1) snakeBuff.splice(idx, 1); // Remove the item from the array
+            });
+          }
+
+          render(newSnake); // Render the new snake
+        }
+      }
+
+      // Toggles game update loop status
+      function toggleLoop() {
+        // Stop the timer & set as undefined
+        if (updateLoop !== undefined) {
+          clearInterval(updateLoop);
+          updateLoop = undefined;
+        }
+        // Start the timer & define the variable
+        else updateLoop = setInterval(update, 1000 / gameSpeed);
+        //console.log("toggleLoop(): Timer was " + ((updateLoop === undefined) ? "stopped" : "started"));
+      }
+
+      // Handles key presses
+      function onKeyDown(e) {
+        // Movement keys
+        if ((e.keyCode == 37 || e.keyCode == 65) && lastTickDir != 3) dir = 1; // Left  / A
+        else if ((e.keyCode == 38 || e.keyCode == 87) && lastTickDir != 4) dir = 2; // Up    / W
+        else if ((e.keyCode == 39 || e.keyCode == 68) && lastTickDir != 1) dir = 3; // Right / D
+        else if ((e.keyCode == 40 || e.keyCode == 83) && lastTickDir != 2) dir = 4; // Down  / S
+        // Other keys (debugging mostly)
+        else if (e.keyCode == 32) togglePause(); // Space = Pause toggle
+        else if (e.keyCode == 82) setup(); // R = Reset
+        //else if(e.keyCode == 90) addTailPart(); // Z = Add tail part
+      }
+
+      document.body.addEventListener("keydown", onKeyDown, true);
+
+      // Touch movement events for mobile
+
+      gc.addEventListener('touchstart', handleTouchStart, false);
+      gc.addEventListener('touchmove', handleTouchMove, false);
+
+      var xDown = null;
+      var yDown = null;
+
+      function handleTouchStart(e) {
+        xDown = e.touches[0].clientX;
+        yDown = e.touches[0].clientY;
+        e.preventDefault();
+      };
+
+      var moveDelayed = false;
+      var touchDelay = 0;
+
+      // TODO Add queuing touch events
+
+      function handleTouchMove(e) {
+        if (!xDown || !yDown) return;
+
+        if (touchDelay < 2) {
+          touchDelay++;
+          return;
+        }
+        touchDelay = 0; // Delay touchMove event by 2 execution for consistency
+
+        var xUp = e.touches[0].clientX;
+        var yUp = e.touches[0].clientY;
+
+        e.preventDefault();
+
+        var xDiff = xDown - xUp;
+        var yDiff = yDown - yUp;
+
+        if (Math.abs(xDiff) > Math.abs(yDiff)) { // Most significant)
+          if (xDiff > 0) { // Swiped left
+            if (dir != 1 && lastTickDir != 3) { // Go left if not going right
+              dir = 1;
+            }
+          } else { // Swiped right
+            if (dir != 3 && lastTickDir != 1) { // Go right if not going left
+              dir = 3;
+            }
+          }
+        } else {
+          if (yDiff > 0) { // Swiped up
+            if (dir != 2 && lastTickDir != 4) { // Go up if not going down
+              dir = 2;
+            }
+          } else { // Swiped down
+            if (dir != 4 && lastTickDir != 2) { // Go down if not going up
+              dir = 4;
+            }
+          }
+        }
+        // Reset values
+        xDown = null;
+        yDown = null;
+      };
+
+      function preventTouchZoom(e) {
+        e.preventDefault();
+      }
+
+      document.addEventListener("touchstart", preventTouchZoom, true);
+      document.addEventListener("touchend", preventTouchZoom, true);
+
+      function setup() {
+        if (updateLoop !== undefined) toggleLoop(); // Stop the timer if running
+
+        snake = []; // Reset snake
+        snakeBuff = []; // Reset snake buffer
+        food = []; // Reset food
+
+        if (localStorage.getItem("highscore") === null) localStorage.setItem("highscore", 0); // If no highscore saved, save as 0
+
+        // Set controls depending on if the device is mobile
+        ctrlsHelp.innerHTML = "<ins>C 0 N T R 0 L Z</ins><br>Move = " + ((isMobile) ? "Swipe Direction<br>Pause Game = Tap Score<br>Reset Game = Refresh Page" : "Arrow Keys / WASD<br>Pause Game = Space<br>Reset Game = R");
+        if (isMobile) { // Zoom game elements if on portrait viewport (mobile etc.)
+          //screen.orientation.lock("portrait"); // Try to lock mobile device orientation on portrait
+
+          var tmpW = 24;
+          for (i = 96; i > 1; i -= 8) {
+            //alert("comparing " + grids * i + " to width of " + document.body.clientWidth);
+            if (grids * i < document.body.clientWidth) {
+              tmpW = i;
+              break;
+            }
+          }
+          gridSize = tmpW;
+
+          var tmpS = Math.max(100 + (gridSize * 8), 100);
+          infoText.style.fontSize = tmpS + "%";
+          gameOverTxt.style.fontSize = tmpS + "%";
+          ctrlsHelp.style.fontSize = Math.max(tmpS / 2, 100) + "%";
+        }
+
+        infoText.style.display = "inherit";
+
+        gc.width = gc.height = gridSize * grids; // Set canvas size
+        gc.style.border = ((wraps) ? "2px" : gridSize + "px") + " " + borderStyle; // Game canvas border size, style & color
+        gc.style.display = "inherit";
+        ctrlsHelp.style.display = "inherit";
+
+        // TODO Hide other screens too
+        deathScreen.style.display = "none";
+        deathScreen.style.border = gc.style.border;
+        deathScreen.style.width = deathScreen.style.height = gc.width + "px";
+
+        dir = rngInt(1, 4); // Randomize game starting direction (see {dir} variable for value definitions)
+        if (lastTickDir !== dir) lastTickDir = parseInt(dir.toString().slice(0));
+
+        var offset = (!wraps) ? Math.max(parseInt(grids / 3), 2) : 0;
+        // console.log("offset: " + offset);
+        var startX = rngInt(0 + offset, ((grids - 1)) - offset) * gridSize;
+        var startY = rngInt(0 + offset, ((grids - 1)) - offset) * gridSize;
+        //console.log("Starting @ " + startX + "," + startY);
+        snake.push(new point(startX, startY));
+
+        for (i = 0; i < 2; i++) addTailPart(); // Add 2 tail parts (3 total length on start = 0 score)
+
+        for (i = 0; i < maxFood; i++) genFood(); // Generate {maxFood} food items on the grid
+
+        infoText.addEventListener("touchend", togglePause, true);
+
+        if (!loadDone) {
+          document.querySelector("#loading").style.display = "none";
+          loadDone = true;
+        } // All loaded, hide text
+
+        toggleLoop(); // Start running the game update loop
+      }
+
+      setup(); // Begin the game
+
+    </script>
+  </body>
+
+</html>
